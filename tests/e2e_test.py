@@ -10,6 +10,18 @@ BASE = os.environ.get("GATEWAY_URL", "http://localhost:8080/api/v1")
 INVITE = os.environ.get("TEACHER_INVITE_CODE", "sdu-teacher")
 
 
+def invite_check_disabled():
+    """The dev stack may run with SDU_BAGDAR_SKIP_TEACHER_INVITE=true (see .env)."""
+    value = os.environ.get("SDU_BAGDAR_SKIP_TEACHER_INVITE")
+    if value is None:
+        env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
+        if os.path.exists(env_file):
+            for line in open(env_file):
+                if line.startswith("SDU_BAGDAR_SKIP_TEACHER_INVITE="):
+                    value = line.split("=", 1)[1].strip()
+    return (value or "").lower() == "true"
+
+
 def call(method, path, body=None, token=None):
     request = urllib.request.Request(BASE + path, method=method, data=None if body is None else json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})})
@@ -40,6 +52,7 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(call("GET", "/rooms")[0], 401)
         self.assertEqual(call("GET", "/rooms", token="bad.token")[0], 401)
 
+    @unittest.skipIf(invite_check_disabled(), "teacher invite check disabled by SDU_BAGDAR_SKIP_TEACHER_INVITE=true")
     def test_teacher_registration_needs_invite_code(self):
         status, _ = call("POST", "/auth/register", {"name": "X", "email": f"{uuid.uuid4().hex[:6]}@sdu.edu.kz", "password": "password123", "role": "TEACHER"})
         self.assertEqual(status, 403)

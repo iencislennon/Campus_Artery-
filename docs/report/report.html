@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SDU Bağdar: Project Report</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font: 10.5pt/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; color: #1c1d2b; }
+  h1 { font-size: 26pt; color: #1f2150; margin: 0 0 4px; }
+  h2 { font-size: 17pt; color: #1f2150; border-bottom: 2px solid #8f2d2d; padding-bottom: 3px; margin-top: 30px; break-after: avoid; }
+  h3 { font-size: 12.5pt; color: #8f2d2d; margin: 20px 0 6px; break-after: avoid; }
+  h4 { font-size: 10.5pt; margin: 12px 0 4px; break-after: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 12px; font-size: 9.2pt; }
+  th, td { border: 1px solid #c9c9d3; padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: #ececf4; }
+  tr { break-inside: avoid; }
+  code { font-family: Menlo, Consolas, monospace; font-size: 8.8pt; background: #f1f1f6; padding: 0 3px; border-radius: 3px; }
+  pre { background: #f1f1f6; padding: 8px 10px; border-radius: 5px; font-size: 8.6pt; overflow: hidden; white-space: pre-wrap; break-inside: avoid; }
+  pre code { background: none; padding: 0; }
+  .mermaid { text-align: center; margin: 10px 0; break-inside: avoid; }
+  .mermaid svg { max-width: 100% !important; max-height: 215mm; height: auto; width: auto; }
+  .cover { margin-top: 90px; }
+  .sub { color: #5a5b70; font-size: 12pt; margin-bottom: 30px; }
+  .pagebreak { break-after: page; }
+  .ok { color: #1b7a3a; font-weight: 600; }
+  .skip { color: #9a6a00; font-weight: 600; }
+  .note { background: #fff6e0; border-left: 4px solid #d9a21b; padding: 6px 10px; margin: 10px 0; break-inside: avoid; }
+  ul, ol { margin: 4px 0 8px 18px; padding-left: 10px; }
+  .toc li { margin: 2px 0; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { useMaxWidth: true }, er: { useMaxWidth: true }, classDiagram: { useMaxWidth: true } });</script>
+</head>
+<body>
+
+<div class="cover">
+  <h1>SDU Bağdar</h1>
+  <div class="sub">Smart campus platform for SDU University<br>Project report: requirements, design, database, testing and user documentation</div>
+  <table style="width:70%">
+    <tr><th>Course</th><td>CSS 217, Assignment 2</td></tr>
+    <tr><th>Architecture</th><td>Microservices behind one gateway (REST / JSON)</td></tr>
+    <tr><th>Stack</th><td>Java 17+ (JDK HTTP server, no framework), Python 3.11+ (standard library), SQLite, HTML / CSS / JavaScript</td></tr>
+    <tr><th>Design patterns</th><td>Strategy, Adapter, Decorator (plus a second Strategy in ProjectForge)</td></tr>
+    <tr><th>Repository</th><td>github.com/iencislennon/Campus_Artery-</td></tr>
+  </table>
+  <h3>Contents</h3>
+  <ol class="toc">
+    <li>Requirements specification</li>
+    <li>Software design</li>
+    <li>Database design</li>
+    <li>Testing documentation</li>
+    <li>User documentation</li>
+    <li>Assignment checklist and gaps that were closed</li>
+  </ol>
+</div>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 1 -->
+<h2>1. Requirements specification</h2>
+
+<h3>1.1 Problem statement and goals</h3>
+<p>Students and teachers at SDU lose time on three everyday problems: finding a free classroom, reaching a teacher during office hours, and getting broken equipment fixed. Information about student initiatives and clubs is scattered over chats. <b>SDU Bağdar</b> puts these into one web application, signed in with an SDU e-mail address.</p>
+<p><b>Goals</b></p>
+<ul>
+  <li>Show which rooms of the real SDU layout (blocks D to I) are free right now, filtered by building, floor, kind and capacity.</li>
+  <li>Let teachers publish office hours and let students book them manually or automatically, using a scheduling strategy chosen at request time.</li>
+  <li>Let any user report a facility problem, detect duplicate reports and let teachers drive them to resolution.</li>
+  <li>Let students discover initiatives, follow them, join clubs, answer club surveys and keep a profile with notification settings.</li>
+  <li>Keep the system maintainable: layered services, one database per service, three design patterns visible in working code.</li>
+</ul>
+
+<h3>1.2 Target users and roles</h3>
+<table>
+  <tr><th>Role</th><th>How the account is created</th><th>What the role can do</th></tr>
+  <tr><td><b>Student</b></td><td>First sign-in with an <code>@sdu.edu.kz</code> address and an e-mailed verification code (device registration).</td><td>Browse rooms, teachers, initiatives, clubs; book office hours; report problems and see own reports; follow initiatives, join clubs, answer surveys; edit own profile.</td></tr>
+  <tr><td><b>Teacher</b></td><td>"Register as teacher" form; protected by an invite code in production (<code>TEACHER_INVITE_CODE</code>).</td><td>Everything a student can, plus: manage own office and office hours; review all facility reports and change their status.</td></tr>
+  <tr><td><b>Club owner</b> (a user who created a club)</td><td>Creating a club with an approved document makes the caller its owner.</td><td>Edit the club page, create / edit / delete surveys, read survey results and uploaded files.</td></tr>
+</table>
+
+<h3>1.3 Functional requirements</h3>
+<table>
+  <tr><th>ID</th><th>Module</th><th>Requirement</th></tr>
+  <tr><td>FR-1</td><td>Auth</td><td>Sign in with an SDU e-mail. An unregistered device receives a 6-digit code by e-mail (valid 10 minutes, one request per minute). A registered device signs in without a code.</td></tr>
+  <tr><td>FR-2</td><td>Auth</td><td>Register teachers (invite code required unless disabled for development). Role is stored in a signed token and re-checked by every service.</td></tr>
+  <tr><td>FR-3</td><td>CampusPlus</td><td>List buildings and rooms; show only rooms free now; filter by building, floor, kind (Classroom / Barrel), minimum capacity, free-text query.</td></tr>
+  <tr><td>FR-4</td><td>CampusPlus</td><td>Free-room data comes from the university timetable system through the Adapter.</td></tr>
+  <tr><td>FR-5</td><td>CampusPlus</td><td>Teacher directory; teacher registers or updates own office.</td></tr>
+  <tr><td>FR-6</td><td>CampusPlus</td><td>Teacher creates office-hour slots; overlapping slots are rejected (409).</td></tr>
+  <tr><td>FR-7</td><td>CampusPlus</td><td>Student books a slot manually, or automatically by strategy <code>first</code>, <code>deadline</code> or <code>preferred</code>. One booking per student per slot; capacity is enforced.</td></tr>
+  <tr><td>FR-8</td><td>FixMyCampus</td><td>Submit a report (room, category, description). The room is validated by asking CampusPlus.</td></tr>
+  <tr><td>FR-9</td><td>FixMyCampus</td><td>Validate, audit, de-duplicate and notify through the Decorator pipeline.</td></tr>
+  <tr><td>FR-10</td><td>FixMyCampus</td><td>Teacher moves a report through OPEN, IN_PROGRESS, RESOLVED; the reviewer becomes the assignee. Users see only their own reports and notifications.</td></tr>
+  <tr><td>FR-11</td><td>ProjectForge</td><td>Create, search and follow initiatives (Project, Event, Party, Research); recommendations ranked by a runtime-selected strategy.</td></tr>
+  <tr><td>FR-12</td><td>ProjectForge</td><td>Create clubs (document checked by the AI validation service), join / leave, club deadlines, club event page.</td></tr>
+  <tr><td>FR-13</td><td>ProjectForge</td><td>Club owner builds surveys (short answer, file upload, choice, checkbox); members answer once; owner reads results.</td></tr>
+  <tr><td>FR-14</td><td>ProjectForge</td><td>Profile with contacts, photo and four notification switches; feed only shows enabled kinds.</td></tr>
+  <tr><td>FR-15</td><td>All</td><td>Every invalid request returns one JSON error shape <code>{message, code}</code> with a proper HTTP status.</td></tr>
+</table>
+
+<h3>1.4 Non-functional requirements</h3>
+<table>
+  <tr><th>ID</th><th>Category</th><th>Requirement</th></tr>
+  <tr><td>NFR-1</td><td>Security</td><td>Passwords hashed with PBKDF2-HMAC-SHA256 (120k iterations, random salt). Verification codes are stored hashed. Tokens are HS256 with expiry; the secret comes from <code>CAMPUSOS_SECRET</code> in <code>.env</code>, never from code. Roles are read from the token, never from the request body.</td></tr>
+  <tr><td>NFR-2</td><td>Reliability</td><td>Every outgoing service call has a timeout. An unreachable service gives <code>503</code> with a readable message, never a hang. <code>/health</code> reports each service as ok / degraded / down.</td></tr>
+  <tr><td>NFR-3</td><td>Maintainability</td><td>Presentation, application, domain and infrastructure layers; no cross-service SQL; each service has an <code>explanation.md</code> and a database UML.</td></tr>
+  <tr><td>NFR-4</td><td>Portability</td><td>JDK 17+, Python 3.11+, SQLite; no application framework. One command (<code>scripts/start-all.sh</code>) builds and starts everything.</td></tr>
+  <tr><td>NFR-5</td><td>Persistence</td><td>All data is stored in SQLite files under <code>data/</code> and survives restarts.</td></tr>
+  <tr><td>NFR-6</td><td>Usability</td><td>Responsive web interface; clear inline error messages; no technical error text shown to users.</td></tr>
+  <tr><td>NFR-7</td><td>Observability</td><td>Every request is logged as <code>[service] METHOD path -> status (ms)</code>; logs are in <code>build/logs/</code>.</td></tr>
+</table>
+
+<h3>1.5 Use cases</h3>
+<div class="mermaid">
+flowchart LR
+  S(["Student"]):::actor
+  T(["Teacher"]):::actor
+  O(["Club owner"]):::actor
+  subgraph Auth
+    U1(["Sign in with e-mail and code"])
+    U2(["Register as teacher"])
+  end
+  subgraph CampusPlus
+    U3(["Find free rooms"])
+    U4(["View teacher directory"])
+    U5(["Book office hour<br/>manual or by strategy"])
+    U6(["Manage office and office hours"])
+  end
+  subgraph FixMyCampus
+    U7(["Report a problem"])
+    U8(["Track own reports"])
+    U9(["Review reports and change status"])
+  end
+  subgraph ProjectForge
+    U10(["Search and follow initiatives"])
+    U11(["Join clubs"])
+    U12(["Answer survey"])
+    U13(["Manage club page and surveys"])
+    U14(["Edit profile and notifications"])
+  end
+  S --- U1 & U3 & U4 & U5 & U7 & U8 & U10 & U11 & U12 & U14
+  T --- U2 & U1 & U6 & U9 & U3 & U4
+  O --- U13
+  classDef actor fill:#1f2150,color:#fff,stroke:#1f2150
+</div>
+
+<table>
+  <tr><th>Use case</th><th>Actor</th><th>Main flow</th><th>Alternative / error flows</th></tr>
+  <tr><td><b>UC-1 Sign in</b></td><td>Student, Teacher</td><td>1. Enter SDU e-mail. 2. Press "Send verification code". 3. Code field appears; enter the 6-digit code from the e-mail. 4. Press "Sign in". The device is remembered.</td><td>Not an <code>@sdu.edu.kz</code> address: 422. Wrong or expired code: 401. Second code request within a minute: 429. Registered device: no code needed.</td></tr>
+  <tr><td><b>UC-2 Find a free room</b></td><td>Student</td><td>Open Rooms, choose building / floor / kind / capacity; the list shows rooms free now and until when.</td><td>No match: empty list message. Outside 08:30 to 18:00 the 08:30 state is used.</td></tr>
+  <tr><td><b>UC-3 Book office hour</b></td><td>Student</td><td>Open a teacher, pick a slot, or choose a strategy (first / deadline / preferred) and let the system pick.</td><td>Slot full or already booked: 409. Unknown strategy: 422. No slot satisfies the strategy: clear message.</td></tr>
+  <tr><td><b>UC-4 Manage office hours</b></td><td>Teacher</td><td>Register office, add slots (day, start, end, capacity).</td><td>Overlap with an existing slot: 409. Student attempts it: 403.</td></tr>
+  <tr><td><b>UC-5 Report a problem</b></td><td>Student, Teacher</td><td>Pick room, category, write description; the pipeline validates, links duplicates, saves, notifies.</td><td>Room missing: 422. Description too short / long or unknown category: 422 and an audit entry <code>REJECTED</code>. CampusPlus down: 503.</td></tr>
+  <tr><td><b>UC-6 Review reports</b></td><td>Teacher</td><td>Open the review queue (<code>scope=all</code>), set status; the reporter is notified.</td><td>Student attempts it: 403.</td></tr>
+  <tr><td><b>UC-7 Initiatives and clubs</b></td><td>Student</td><td>Search, follow, get recommendations with a strategy; join a club; answer its survey.</td><td>Missing title or summary: 422. Second survey answer overwrites the first.</td></tr>
+  <tr><td><b>UC-8 Run a club</b></td><td>Club owner</td><td>Create club with a document, edit event page, create surveys, read answers and uploaded files.</td><td>Document rejected by AI validation: 422. Non-owner: 403.</td></tr>
+</table>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 2 -->
+<h2>2. Software design</h2>
+
+<h3>2.1 Architecture</h3>
+<p>The browser talks only to the <b>gateway</b>. The gateway authenticates, checks the role against an access policy and forwards the request to the owning service with the bearer token. Each service owns its database; remote entities are referenced by id and verified over HTTP.</p>
+<div class="mermaid">
+flowchart TB
+    FE["Frontend (HTML / CSS / JS) :5173"] --> GW
+    GW["Gateway - Java :8080<br/>login, device codes, permissions, routing"]
+    GW --> CP["CampusPlus - Java :8081<br/>rooms, timetable, office hours"]
+    GW --> FX["FixMyCampus - Java :8082<br/>reports, audit, notifications"]
+    GW --> PF["ProjectForge - Python :8083<br/>initiatives, clubs, surveys, profile"]
+    GW -. "send code" .-> ML["Mailer - Python :8085<br/>SMTP"]
+    PF -. "validate document" .-> AI["AI validation - Python :8084"]
+    FX -. "validate report" .-> AI
+    FX -. "GET /rooms/id" .-> CP
+    CP --- D1[("campus.db")]
+    FX --- D2[("issues.db")]
+    PF --- D3[("social.db")]
+    GW --- D0[("auth.db")]
+</div>
+
+<h4>Layers inside every service</h4>
+<div class="mermaid">
+flowchart LR
+  P["Presentation<br/>HTTP controllers, *Main / main.py<br/>(composition root)"] --> A["Application<br/>services, ports, registries"]
+  A --> D["Domain<br/>entities, strategy / processor / provider interfaces"]
+  I["Infrastructure<br/>SQLite repositories, HTTP clients, legacy adapter"] -. implements ports .-> A
+  I -. implements .-> D
+</div>
+<table>
+  <tr><th>Layer</th><th>Responsibility</th><th>Example classes</th></tr>
+  <tr><td>Presentation</td><td>Parse HTTP, check token and role, map errors to JSON, wire everything together.</td><td><code>CampusPlusMain</code>, <code>GatewayMain</code>, <code>ProxyHandler</code>, <code>server.py</code></td></tr>
+  <tr><td>Business logic (application)</td><td>Rules and operations: booking, free-room search, report submission, recommendations.</td><td><code>OfficeHourService</code>, <code>RoomService</code>, <code>ReportService</code>, <code>AuthService</code>, <code>services.py</code></td></tr>
+  <tr><td>Domain model</td><td>Entities and the interfaces the patterns are built on.</td><td><code>Room</code>, <code>OfficeHour</code>, <code>Report</code>, <code>SchedulingStrategy</code>, <code>ReportProcessor</code>, <code>TimetableProvider</code></td></tr>
+  <tr><td>Data access</td><td>All SQL lives here, behind repository interfaces.</td><td><code>SqliteRoomRepository</code>, <code>SqliteReportRepository</code>, <code>SqliteUserRepository</code>, Python repositories</td></tr>
+  <tr><td>Shared plumbing</td><td>JSON, tokens, HTTP server, DB access, service client, errors.</td><td><code>services/common-java</code></td></tr>
+</table>
+
+<h3>2.2 UML class diagram</h3>
+<h4>CampusPlus: Strategy</h4>
+<div class="mermaid">
+classDiagram
+    direction LR
+    class SchedulingStrategy {
+        &lt;&lt;interface&gt;&gt;
+        +name() String
+        +choose(openSlots, request) Optional~OfficeHour~
+    }
+    class FirstAvailableStrategy
+    class EarliestDeadlineStrategy
+    class PreferredTimeStrategy
+    class StrategyRegistry {
+        +register(strategy) StrategyRegistry
+        +get(name) SchedulingStrategy
+        +names() Set
+    }
+    class OfficeHourService {
+        +autoBook(student, teacherId, strategyName, request)
+        +book(student, officeHourId)
+        +create(teacher, day, start, end, capacity)
+    }
+    class OfficeHour {
+        &lt;&lt;record&gt;&gt;
+        +hasFreeSeat() boolean
+        +overlaps(day, start, end) boolean
+        +nextOccurrence(from) LocalDate
+    }
+    SchedulingStrategy &lt;|.. FirstAvailableStrategy
+    SchedulingStrategy &lt;|.. EarliestDeadlineStrategy
+    SchedulingStrategy &lt;|.. PreferredTimeStrategy
+    StrategyRegistry o-- SchedulingStrategy
+    OfficeHourService --> StrategyRegistry
+    OfficeHourService ..> OfficeHour
+</div>
+
+<h4>CampusPlus: Adapter</h4>
+<div class="mermaid">
+classDiagram
+    direction LR
+    class TimetableProvider {
+        &lt;&lt;interface&gt;&gt;
+        +freeIntervals(roomId, day) List~FreeInterval~
+    }
+    class LegacyTimetableAdapter {
+        +freeIntervals(roomId, day)
+    }
+    class LegacyTimetableSystem {
+        +exportScheduleRows() List~String~
+    }
+    class RoomService {
+        +freeRooms(filter, day, at) List~FreeRoom~
+    }
+    TimetableProvider &lt;|.. LegacyTimetableAdapter
+    LegacyTimetableAdapter --> LegacyTimetableSystem : adapts
+    RoomService --> TimetableProvider
+</div>
+
+<h4>FixMyCampus: Decorator</h4>
+<div class="mermaid">
+classDiagram
+    direction LR
+    class ReportProcessor {
+        &lt;&lt;interface>>
+        +process(report) Report
+    }
+    class BaseReportProcessor {
+        -reports ReportRepository
+        +process(report)
+    }
+    class ValidationAuditDecorator {
+        -next ReportProcessor
+        +process(report)
+    }
+    class DuplicateAlertDecorator {
+        -next ReportProcessor
+        +process(report)
+    }
+    class NotificationDecorator {
+        -next ReportProcessor
+        +process(report)
+    }
+    class ReportPipelineFactory {
+        +build(names) ReportProcessor
+    }
+    class ReportService {
+        +submit(user, bearer, roomId, category, description)
+        +updateStatus(user, reportId, status)
+    }
+    class Report {
+        &lt;&lt;record>>
+        +draft(...) Report
+        +withDuplicateOf(id) Report
+    }
+    ReportProcessor &lt;|.. BaseReportProcessor
+    ReportProcessor &lt;|.. ValidationAuditDecorator
+    ReportProcessor &lt;|.. DuplicateAlertDecorator
+    ReportProcessor &lt;|.. NotificationDecorator
+    ValidationAuditDecorator o-- ReportProcessor : wraps
+    DuplicateAlertDecorator o-- ReportProcessor : wraps
+    NotificationDecorator o-- ReportProcessor : wraps
+    ReportPipelineFactory ..> ReportProcessor : creates chain
+    ReportService --> ReportProcessor
+    ReportProcessor ..> Report
+</div>
+
+<h4>Gateway and ProjectForge</h4>
+<div class="mermaid">
+classDiagram
+    direction LR
+    class AuthService {
+        +register(...) AuthUser
+        +requestVerificationCode(email, deviceId) boolean
+        +login(email, code, deviceId) AuthUser
+    }
+    class UserRepository {&lt;&lt;interface>>}
+    class PasswordHasher {&lt;&lt;interface>>}
+    class VerificationCodeSender {&lt;&lt;interface>>}
+    class SqliteUserRepository
+    class Pbkdf2PasswordHasher
+    class MailerCodeSender
+    class ConsoleCodeSender
+    class AccessPolicy {+check(user, method, path)}
+    class ProxyHandler
+    AuthService --> UserRepository
+    AuthService --> PasswordHasher
+    AuthService --> VerificationCodeSender
+    UserRepository &lt;|.. SqliteUserRepository
+    PasswordHasher &lt;|.. Pbkdf2PasswordHasher
+    VerificationCodeSender &lt;|.. MailerCodeSender
+    VerificationCodeSender &lt;|.. ConsoleCodeSender
+    ProxyHandler --> AccessPolicy
+
+    class RecommendationStrategy {&lt;&lt;interface>> +rank(items, followedCategories)}
+    class PopularityStrategy
+    class RecentActivityStrategy
+    class CategoryBasedStrategy
+    class StrategyRegistry_py["StrategyRegistry (Python)"]
+    RecommendationStrategy &lt;|.. PopularityStrategy
+    RecommendationStrategy &lt;|.. RecentActivityStrategy
+    RecommendationStrategy &lt;|.. CategoryBasedStrategy
+    StrategyRegistry_py o-- RecommendationStrategy
+</div>
+
+<h3>2.3 How the three required design patterns are used</h3>
+
+<h4>Strategy: office-hour scheduling (CampusPlus)</h4>
+<table>
+  <tr><th>Requirement</th><th>Where it is met</th></tr>
+  <tr><td>Common strategy interface</td><td><code>SchedulingStrategy</code> with <code>name()</code> and <code>choose(openSlots, request)</code>.</td></tr>
+  <tr><td>At least three concrete strategies</td><td><code>FirstAvailableStrategy</code> ("first": earliest slot of the weekly order), <code>EarliestDeadlineStrategy</code> ("deadline": soonest slot that still happens before the student's deadline), <code>PreferredTimeStrategy</code> ("preferred": start time closest to the preferred time).</td></tr>
+  <tr><td>Select or switch at runtime</td><td>The request <code>POST /office-hours/book</code> carries <code>strategy</code>. <code>StrategyRegistry.get(name)</code> resolves it per request; an unknown name returns 422 listing the valid names.</td></tr>
+  <tr><td>New strategy without rewriting the client</td><td><code>OfficeHourService</code> only knows the interface and the registry. A new algorithm is one new class plus one <code>register(...)</code> call in <code>CampusPlusMain</code>. Unit test <i>"a new strategy plugs in without changing existing code"</i> registers a fourth strategy (<code>last</code>) and uses it while the other three keep working.</td></tr>
+</table>
+<p>ProjectForge applies the same pattern for recommendations (<code>popularity</code>, <code>recent</code>, <code>category</code>); it is an extra, not needed for the assignment.</p>
+
+<h4>Adapter: SDU timetable import (CampusPlus)</h4>
+<table>
+  <tr><th>Requirement</th><th>Where it is met</th></tr>
+  <tr><td>Component with an incompatible interface</td><td><code>LegacyTimetableSystem</code> simulates the university system. It exports pipe-separated text rows <code>ROOM|WEEKDAY|HHMM_FROM|HHMM_TO|COURSE</code> with numeric weekdays and <code>HHMM</code> integers.</td></tr>
+  <tr><td>Adapter makes it compatible</td><td><code>LegacyTimetableAdapter implements TimetableProvider</code>. It parses the rows and returns typed <code>FreeInterval</code> objects between 08:30 and 18:00.</td></tr>
+  <tr><td>Original component not modified</td><td><code>LegacyTimetableSystem</code> has no dependency on the application and no change was needed to use it.</td></tr>
+  <tr><td>System uses it through the adapter</td><td><code>RoomService</code> depends on <code>TimetableProvider</code> only. <code>GET /rooms</code> returns <code>freeUntil</code> values computed from the legacy rows (verified by the end-to-end test <code>free_rooms_come_through_the_timetable_adapter</code>). Replacing the simulation by a real client means writing a new <code>TimetableProvider</code>.</td></tr>
+</table>
+
+<h4>Decorator: report processing (FixMyCampus)</h4>
+<table>
+  <tr><th>Requirement</th><th>Where it is met</th></tr>
+  <tr><td>Common component interface</td><td><code>ReportProcessor.process(Report)</code>.</td></tr>
+  <tr><td>At least three concrete decorators</td><td><code>ValidationAuditDecorator</code> (checks category and description length, audits <code>REJECTED</code> / <code>SUBMITTED</code>), <code>DuplicateAlertDecorator</code> (links <code>duplicateOf</code>, alerts the first reporter), <code>NotificationDecorator</code> (tells the reporter the report was received).</td></tr>
+  <tr><td>Each wraps another <code>ReportProcessor</code></td><td>Every decorator holds a <code>next</code> field of the interface type and delegates to it. The innermost component is <code>BaseReportProcessor</code>, which only saves.</td></tr>
+  <tr><td>Combine multiple decorators</td><td><code>ReportPipelineFactory.build(names)</code> stacks them in the order given by <code>FIXMYCAMPUS_PIPELINE</code> (default <code>validation,duplicate,notification</code>, outermost first). Any subset and any order works.</td></tr>
+  <tr><td>Add behaviour without modifying the original</td><td><code>BaseReportProcessor</code> is never edited. The unit test <i>"a new decorator wraps the chain without modifying it"</i> adds a tracing decorator on top of the existing chain.</td></tr>
+</table>
+<div class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant V as ValidationAuditDecorator
+    participant D as DuplicateAlertDecorator
+    participant N as NotificationDecorator
+    participant B as BaseReportProcessor
+    C->>V: process(report)
+    V->>V: validate (422 + REJECTED audit on failure)
+    V->>D: process(report)
+    D->>D: find open duplicate, set duplicateOf
+    D->>N: process(report)
+    N->>B: process(report)
+    B-->>N: saved report
+    N-->>N: notify reporter
+    N-->>D: saved
+    D-->>D: alert original reporter
+    D-->>V: saved
+    V-->>V: audit SUBMITTED
+    V-->>C: saved report
+</div>
+
+<h3>2.4 Important design decisions</h3>
+<table>
+  <tr><th>Decision</th><th>Reason</th></tr>
+  <tr><td>Microservices with one gateway</td><td>Each module (rooms, reports, initiatives) can change and fail independently; the frontend has a single address.</td></tr>
+  <tr><td>Database per service, no foreign keys across databases</td><td>No hidden coupling. FixMyCampus asks CampusPlus over HTTP whether a room exists instead of reading its tables.</td></tr>
+  <tr><td>Identity from a signed token, not from the request body</td><td>A client cannot grant itself the TEACHER role. Gateway and services both verify.</td></tr>
+  <tr><td>Device verification instead of passwords for students</td><td>Students sign in with an SDU e-mail. A 6-digit code registers the device once; the code is stored hashed, expires in 10 minutes and has a one-minute resend limit.</td></tr>
+  <tr><td>Ports and adapters (repository, sender, hasher interfaces)</td><td>Business rules are testable without a database or mail server; the code sender can be <code>mailer</code> (SMTP) or <code>console</code> (development).</td></tr>
+  <tr><td>No application frameworks</td><td>JDK <code>HttpServer</code> and Python <code>http.server</code> keep the dependency list to SQLite and logging jars, and make the layering explicit.</td></tr>
+  <tr><td>Validation at two levels</td><td>Decorators validate content; the service boundary still checks that the room exists, so rules hold even if the pipeline is configured without the validation decorator.</td></tr>
+  <tr><td>Simulated university data</td><td>Timetable, grades and the notification feed are deterministic demo data; the adapter and ports make replacing them a local change.</td></tr>
+</table>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 3 -->
+<h2>3. Database design</h2>
+
+<h3>3.1 Data model</h3>
+<p>Four SQLite files live in <code>data/</code>. Columns that point into another service (<code>user_id</code>, <code>reporter_id</code>, <code>room_id</code> in FixMyCampus and so on) are plain text values without foreign keys; they are marked <i>remote</i>.</p>
+
+<h4>auth.db (gateway)</h4>
+<div class="mermaid">
+erDiagram
+    users ||--o{ trusted_devices : registers
+    users ||--o{ login_codes : "requests (by e-mail)"
+    users {
+        TEXT id PK
+        TEXT email UK
+        TEXT name
+        TEXT role "STUDENT or TEACHER"
+        TEXT password_hash
+        TEXT created_at
+    }
+    trusted_devices {
+        TEXT user_id PK
+        TEXT device_id PK
+        TEXT registered_at
+        TEXT last_seen_at
+    }
+    login_codes {
+        INTEGER id PK
+        TEXT email
+        TEXT code_hash
+        INTEGER expires_at
+        INTEGER used
+        TEXT created_at
+    }
+</div>
+
+<h4>campus.db (CampusPlus)</h4>
+<div class="mermaid">
+erDiagram
+    buildings ||--o{ rooms : contains
+    rooms ||--o{ teacher_offices : "office in"
+    teacher_offices ||--o{ office_hours : holds
+    office_hours ||--o{ office_hour_bookings : "booked as"
+    buildings {
+        TEXT id PK
+        TEXT name
+        TEXT color
+        TEXT ink
+    }
+    rooms {
+        TEXT id PK
+        TEXT building_id FK
+        INTEGER floor
+        TEXT kind "Classroom or Barrel"
+        INTEGER capacity "greater than 0"
+    }
+    teacher_offices {
+        TEXT user_id PK "remote"
+        TEXT name
+        TEXT department
+        TEXT office_room_id FK
+    }
+    office_hours {
+        TEXT id PK
+        TEXT teacher_id FK
+        INTEGER day "1 to 5"
+        TEXT start_time
+        TEXT end_time
+        INTEGER capacity "1 to 20"
+    }
+    office_hour_bookings {
+        TEXT id PK
+        TEXT office_hour_id FK
+        TEXT student_id "remote, UNIQUE with slot"
+        TEXT created_at
+    }
+</div>
+
+<h4>issues.db (FixMyCampus)</h4>
+<div class="mermaid">
+erDiagram
+    issue_categories ||--o{ reports : classifies
+    reports ||--o{ reports : "duplicate_of"
+    reports ||--o{ report_audit : "audited by"
+    issue_categories {
+        TEXT name PK
+        INTEGER sort_order
+    }
+    reports {
+        TEXT id PK
+        TEXT room_id "remote CampusPlus code"
+        TEXT category FK
+        TEXT description
+        TEXT status "OPEN, IN_PROGRESS, RESOLVED"
+        TEXT reporter_id "remote"
+        TEXT created_at
+        TEXT duplicate_of FK
+        TEXT assignee_id "remote"
+    }
+    report_audit {
+        INTEGER id PK
+        TEXT report_id FK
+        TEXT actor
+        TEXT action
+        TEXT detail
+        TEXT at
+    }
+    notifications {
+        INTEGER id PK
+        TEXT user_id "remote"
+        TEXT message
+        TEXT created_at
+    }
+</div>
+
+<h4>social.db (ProjectForge)</h4>
+<div class="mermaid">
+erDiagram
+    initiatives ||--o{ initiative_follows : "followed by"
+    clubs ||--o{ club_members : has
+    clubs ||--o{ club_deadlines : sets
+    clubs ||--o{ surveys : owns
+    surveys ||--o{ survey_questions : asks
+    surveys ||--o{ survey_responses : collects
+    profiles ||--o{ grades : has
+    profiles ||--o{ feed_items : receives
+    initiatives {
+        TEXT id PK
+        TEXT title
+        TEXT category "Project, Event, Party, Research"
+        TEXT summary
+        TEXT organizer_id "remote"
+        TEXT contact
+    }
+    initiative_follows {
+        TEXT initiative_id PK
+        TEXT user_id PK "remote"
+    }
+    clubs {
+        TEXT id PK
+        TEXT name UK
+        TEXT owner_id "remote"
+        TEXT event_name
+        TEXT description
+    }
+    club_members {
+        TEXT club_id PK
+        TEXT user_id PK "remote"
+    }
+    club_deadlines {
+        TEXT id PK
+        TEXT club_id FK
+        TEXT title
+        TEXT due_date
+    }
+    surveys {
+        TEXT id PK
+        TEXT club_id FK
+        TEXT title
+    }
+    survey_questions {
+        TEXT id PK
+        TEXT survey_id FK
+        TEXT kind "short, file, choice, checkbox"
+        INTEGER required
+    }
+    survey_responses {
+        TEXT id PK
+        TEXT survey_id FK
+        TEXT user_id "remote"
+        TEXT answers "JSON"
+    }
+    profiles {
+        TEXT user_id PK "remote"
+        TEXT name
+        TEXT email
+        INTEGER notify_lessons
+    }
+    grades {
+        INTEGER id PK
+        TEXT user_id FK
+        TEXT course
+        INTEGER score "0 to 100"
+    }
+    feed_items {
+        INTEGER id PK
+        TEXT user_id FK
+        TEXT kind
+        TEXT text
+    }
+</div>
+
+<h3>3.2 Main entities and relationships</h3>
+<table>
+  <tr><th>Entity</th><th>Meaning</th><th>Relationships</th></tr>
+  <tr><td><code>users</code></td><td>Student or teacher account.</td><td>Referenced by id (inside a token) from all other services. Has trusted devices and login codes.</td></tr>
+  <tr><td><code>buildings</code> / <code>rooms</code></td><td>SDU blocks D to I (colour per block); 90 classrooms plus 11 "barrel" halls.</td><td>One building has many rooms. Free-room state is computed from the timetable adapter, not stored.</td></tr>
+  <tr><td><code>teacher_offices</code> / <code>office_hours</code> / <code>office_hour_bookings</code></td><td>A teacher's office, weekly slots and student bookings.</td><td>1 to N chain. <code>UNIQUE(office_hour_id, student_id)</code> prevents double booking; <code>CHECK</code> constraints bound day and capacity.</td></tr>
+  <tr><td><code>reports</code></td><td>A facility problem for a room.</td><td>Belongs to one category; may point to an earlier report (<code>duplicate_of</code>); has an audit trail.</td></tr>
+  <tr><td><code>report_audit</code> / <code>notifications</code></td><td>History of what happened to reports; messages to users.</td><td><code>report_id</code> is nullable so rejected submissions can be audited.</td></tr>
+  <tr><td><code>initiatives</code> / <code>initiative_follows</code></td><td>Student initiatives and who follows them.</td><td>Many-to-many with users through the follow table (composite key).</td></tr>
+  <tr><td><code>clubs</code> and its children</td><td>Clubs with members, deadlines and surveys.</td><td>Survey to questions to responses; one response per user per survey.</td></tr>
+  <tr><td><code>profiles</code> / <code>grades</code> / <code>feed_items</code></td><td>Profile, notification switches and simulated grades / feed.</td><td>Created on a user's first profile visit.</td></tr>
+</table>
+
+<h3>3.3 How data is stored and retrieved</h3>
+<ul>
+  <li><b>Storage:</b> one SQLite file per service in <code>data/</code> (<code>auth.db</code>, <code>campus.db</code>, <code>issues.db</code>, <code>social.db</code>). Each service creates its schema and, when the database is empty, its demo data at start-up (<code>CampusSchema</code>, <code>FixSchema</code>, and the Python equivalents). The files are ignored by git, so every installation starts from clean seed data.</li>
+  <li><b>Access:</b> only repository classes run SQL, with parameterised statements (user values are never concatenated into SQL). Java services use the <code>Database</code> helper: one connection per call, <code>PRAGMA foreign_keys=ON</code>, transactions for multi-row changes, and <code>UNIQUE</code> violations mapped to HTTP 409.</li>
+  <li><b>Retrieval:</b> repositories return domain objects (<code>Room</code>, <code>Report</code>, ...). Services combine them with business rules; the presentation layer turns the result into JSON.</li>
+  <li><b>Integrity:</b> <code>CHECK</code> constraints (roles, statuses, capacity, scores), <code>UNIQUE</code> keys (e-mail, club name, booking), foreign keys inside a database; cross-service references are validated over HTTP.</li>
+  <li><b>Secrets in data:</b> passwords and verification codes are stored only as PBKDF2 hashes.</li>
+</ul>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 4 -->
+<h2>4. Testing documentation</h2>
+
+<h3>4.1 Test suites and how to run them</h3>
+<table>
+  <tr><th>Suite</th><th>Location</th><th>Tests</th><th>Command</th></tr>
+  <tr><td>Pattern unit tests (Java)</td><td><code>tests/java/PatternTests.java</code></td><td>17</td><td><code>tests/run-java-tests.sh</code></td></tr>
+  <tr><td>End-to-end tests through the gateway</td><td><code>tests/e2e_test.py</code></td><td>14</td><td><code>python3 tests/e2e_test.py -v</code> (stack must be running)</td></tr>
+  <tr><td>ProjectForge unit tests</td><td><code>services/project-forge-python/tests</code></td><td>2</td><td><code>python3 -m unittest discover -s services/project-forge-python -t services/project-forge-python</code></td></tr>
+  <tr><td>AI validation unit tests</td><td><code>services/ai-validation-python/tests</code></td><td>8</td><td>same, with <code>ai-validation-python</code></td></tr>
+  <tr><td>Mailer unit tests</td><td><code>services/mailer-python/tests</code></td><td>4</td><td>same, with <code>mailer-python</code></td></tr>
+</table>
+
+<h3>4.2 Test cases for the main functionality</h3>
+<table>
+  <tr><th>ID</th><th>Scenario</th><th>Expected result</th><th>Test</th></tr>
+  <tr><td>T-1</td><td>All services answer <code>/health</code></td><td>Every service reports ok</td><td>e2e <code>test_all_services_healthy</code></td></tr>
+  <tr><td>T-2</td><td>Wrong password; calling a route without a token or with a forged token</td><td>401</td><td>e2e <code>test_login_rejects_wrong_password_and_protects_routes</code></td></tr>
+  <tr><td>T-3</td><td>Teacher registration without the invite code</td><td>403 (skipped when the dev stack runs with <code>SDU_BAGDAR_SKIP_TEACHER_INVITE=true</code>)</td><td>e2e <code>test_teacher_registration_needs_invite_code</code></td></tr>
+  <tr><td>T-4</td><td>Campus contains only blocks D to I</td><td>Exactly the six real blocks</td><td>e2e <code>test_campus_has_only_blocks_d_to_i</code></td></tr>
+  <tr><td>T-5</td><td>Room filters and barrel halls</td><td>Filters by building, floor, kind, capacity</td><td>e2e <code>test_room_filters_and_barrels</code></td></tr>
+  <tr><td>T-6</td><td>Office-hour rules: overlap, capacity, double booking, role</td><td>409 for conflicts, 403 for students creating slots</td><td>e2e <code>test_office_hours_rules</code></td></tr>
+  <tr><td>T-7</td><td>Submit a report, duplicate, notification</td><td>201, <code>duplicateOf</code> set, notifications created</td><td>e2e <code>test_decorator_pipeline_validates_alerts_and_notifies</code></td></tr>
+  <tr><td>T-8</td><td>Invalid report and unknown room</td><td>422</td><td>e2e <code>test_validation_and_service_boundary</code></td></tr>
+  <tr><td>T-9</td><td>Only teachers review reports</td><td>403 for students</td><td>e2e <code>test_only_teachers_review</code></td></tr>
+  <tr><td>T-10</td><td>Initiative lifecycle: create, search, follow</td><td>Initiative visible and followed</td><td>e2e <code>test_initiative_lifecycle</code></td></tr>
+  <tr><td>T-11</td><td>Clubs and profile</td><td>Join / leave, profile persisted, feed respects switches</td><td>e2e <code>test_clubs_and_profile</code></td></tr>
+  <tr><td>T-12</td><td>Mail contents and recipient rules</td><td>Code in the body; non-SDU and header-injection rejected</td><td>mailer tests (4)</td></tr>
+  <tr><td>T-13</td><td>AI validation rules</td><td>Short, empty or invalid text rejected</td><td>ai-validation tests (8)</td></tr>
+</table>
+
+<h3>4.3 Tests for the three design patterns</h3>
+<table>
+  <tr><th>Pattern</th><th>Test (all in <code>PatternTests.java</code> unless noted)</th><th>What it proves</th></tr>
+  <tr><td rowspan="6">Strategy</td><td>first picks earliest weekly slot</td><td>Concrete strategy 1</td></tr>
+  <tr><td>deadline skips slots after the deadline</td><td>Concrete strategy 2, including "no slot" case</td></tr>
+  <tr><td>preferred picks closest start time</td><td>Concrete strategy 3</td></tr>
+  <tr><td>preferred without a time yields nothing</td><td>Edge case handled safely</td></tr>
+  <tr><td>registry switches at runtime and rejects unknown names</td><td>Same caller code gives different results depending on the name; 422 for an unknown name</td></tr>
+  <tr><td>a new strategy plugs in without changing existing code</td><td>Open/closed: a fourth strategy is added from outside</td></tr>
+  <tr><td rowspan="3">Adapter</td><td>legacy rows become free intervals</td><td>Incompatible text format is converted; the room is busy during a legacy lesson</td></tr>
+  <tr><td>room without lessons is free all day</td><td>Adapter returns the full 08:30 to 18:00 interval</td></tr>
+  <tr><td>used through the TimetableProvider interface only</td><td>Application code needs no knowledge of the legacy class</td></tr>
+  <tr><td rowspan="7">Decorator</td><td>base processor only stores</td><td>Undecorated component has no side effects</td></tr>
+  <tr><td>validation rejects bad category / description and audits it</td><td>Decorator 1 (rejection path stores nothing)</td></tr>
+  <tr><td>duplicate links to the open report and alerts its author</td><td>Decorator 2</td></tr>
+  <tr><td>notification tells the reporter</td><td>Decorator 3</td></tr>
+  <tr><td>full stack combines all three</td><td>Decorators combine and cooperate</td></tr>
+  <tr><td>order and subset are configurable</td><td>Any order / any subset works; unknown name is rejected</td></tr>
+  <tr><td>a new decorator wraps the chain without modifying it</td><td>Extension without touching the original component</td></tr>
+</table>
+<p>End-to-end counterparts: <code>test_free_rooms_come_through_the_timetable_adapter</code>, <code>test_strategy_pattern_selects_slots_at_runtime</code>, <code>test_decorator_pipeline_validates_alerts_and_notifies</code>, and <code>test_recommendation_strategies_switch_at_runtime</code> (ProjectForge Strategy).</p>
+
+<h3>4.4 Invalid input and error handling (live responses)</h3>
+<table>
+  <tr><th>Input</th><th>HTTP</th><th>Response</th></tr>
+  <tr><td>Sign-in e-mail <code>abc</code></td><td>422</td><td><code>{"message":"Enter a valid SDU email address.","code":"VALIDATION_FAILED"}</code></td></tr>
+  <tr><td>E-mail <code>a@gmail.com</code></td><td>422</td><td><code>Use your @sdu.edu.kz email.</code></td></tr>
+  <tr><td>Request without token</td><td>401</td><td><code>Missing bearer token.</code> (<code>UNAUTHORIZED</code>)</td></tr>
+  <tr><td>Wrong verification code</td><td>401</td><td><code>Email or verification code is incorrect.</code></td></tr>
+  <tr><td>Report with description <code>x</code></td><td>422</td><td><code>AI rejected this report: Describe the issue in at least 10 characters.</code></td></tr>
+  <tr><td>Report for room <code>Z999</code></td><td>422</td><td><code>Room Z999 does not exist.</code></td></tr>
+  <tr><td>Booking with strategy <code>random</code></td><td>422</td><td><code>Unknown scheduling strategy 'random'. Use one of [first, deadline, preferred].</code></td></tr>
+  <tr><td>Student creates an office hour</td><td>403</td><td><code>Your role (STUDENT) cannot do this.</code></td></tr>
+  <tr><td>Initiative with empty title</td><td>422</td><td><code>Title and summary are required.</code></td></tr>
+  <tr><td>Overlapping office hour / double booking</td><td>409</td><td>Conflict message (e2e T-6)</td></tr>
+  <tr><td>Second code request within a minute</td><td>429</td><td><code>A code was just sent. Wait a minute before requesting another.</code></td></tr>
+  <tr><td>Mail server not configured</td><td>503</td><td><code>Email delivery is not configured on this server.</code></td></tr>
+  <tr><td>A downstream service is down</td><td>503</td><td>Readable message; no hang (timeouts)</td></tr>
+</table>
+
+<h3>4.5 Test results</h3>
+<p>Executed on 22 October 2026 on macOS (JDK 25, Python 3.14) against the running stack.</p>
+<table>
+  <tr><th>Suite</th><th>Run</th><th>Passed</th><th>Failed</th><th>Skipped</th></tr>
+  <tr><td>Java pattern unit tests</td><td>17</td><td class="ok">17</td><td>0</td><td>0</td></tr>
+  <tr><td>End-to-end tests</td><td>14</td><td class="ok">13</td><td>0</td><td class="skip">1 (invite check disabled in the dev <code>.env</code>)</td></tr>
+  <tr><td>ProjectForge unit tests</td><td>2</td><td class="ok">2</td><td>0</td><td>0</td></tr>
+  <tr><td>AI validation unit tests</td><td>8</td><td class="ok">8</td><td>0</td><td>0</td></tr>
+  <tr><td>Mailer unit tests</td><td>4</td><td class="ok">4</td><td>0</td><td>0</td></tr>
+  <tr><td><b>Total</b></td><td><b>45</b></td><td class="ok"><b>44</b></td><td><b>0</b></td><td><b>1</b></td></tr>
+</table>
+<div class="note">The skipped test (T-3) runs and passes when the stack starts with <code>SDU_BAGDAR_SKIP_TEACHER_INVITE=false</code>. Before the test was made configuration-aware it failed with 201 instead of 403 in the development setup; the application behaved as configured, the test assumption was wrong.</div>
+<pre><code>$ tests/run-java-tests.sh
+ok      strategy: first picks earliest weekly slot
+ok      strategy: deadline skips slots after the deadline
+ok      strategy: preferred picks closest start time
+...
+ok      decorator: a new decorator wraps the chain without modifying it
+17 passed, 0 failed
+
+$ python3 tests/e2e_test.py -v
+Ran 14 tests in 0.259s
+OK (skipped=1)</code></pre>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 5 -->
+<h2>5. User documentation</h2>
+
+<h3>5.1 Installation and running</h3>
+<p><b>Requirements:</b> JDK 17 or newer (tested on 25), Python 3.11 or newer, <code>curl</code> and <code>openssl</code>. The needed jars (<code>sqlite-jdbc</code>, <code>slf4j</code>) are in <code>lib/</code>. No internet access or package manager step is required.</p>
+<pre><code>git clone https://github.com/iencislennon/Campus_Artery-.git
+cd Campus_Artery-
+scripts/start-all.sh        # builds the Java modules, creates .env with a random secret, starts all 7 processes
+open http://localhost:5173  # or open the address in any browser
+scripts/stop-all.sh         # stop everything</code></pre>
+<table>
+  <tr><th>Process</th><th>Port</th><th>Logs</th></tr>
+  <tr><td>Frontend (static files)</td><td>5173</td><td><code>build/logs/frontend.log</code></td></tr>
+  <tr><td>Gateway</td><td>8080</td><td><code>build/logs/gateway.log</code></td></tr>
+  <tr><td>CampusPlus / FixMyCampus / ProjectForge</td><td>8081 / 8082 / 8083</td><td><code>build/logs/*.log</code></td></tr>
+  <tr><td>AI validation / Mailer</td><td>8084 / 8085</td><td><code>build/logs/*.log</code></td></tr>
+</table>
+
+<h3>5.2 Configuration (<code>.env</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Meaning</th></tr>
+  <tr><td><code>CAMPUSOS_SECRET</code></td><td>Token signing secret; generated automatically on first start.</td></tr>
+  <tr><td><code>SDU_BAGDAR_SKIP_VERIFICATION</code></td><td><code>false</code> requires the e-mail code on a new device (default). <code>true</code> skips it for development.</td></tr>
+  <tr><td><code>MAIL_DELIVERY</code></td><td><code>mailer</code> sends real e-mail through SMTP (needs <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASSWORD</code>, <code>SMTP_FROM</code>). <b><code>console</code> prints the code to <code>build/logs/gateway.log</code>: use this for a demo or when no mail server is available.</b></td></tr>
+  <tr><td><code>SDU_BAGDAR_SKIP_TEACHER_INVITE</code>, <code>TEACHER_INVITE_CODE</code></td><td>Whether teacher registration needs an invite code, and the code itself.</td></tr>
+  <tr><td><code>CAMPUSOS_SEED_DEMO</code></td><td><code>true</code> creates demo student and teacher accounts (passwords in <code>.env.example</code>).</td></tr>
+  <tr><td><code>FIXMYCAMPUS_PIPELINE</code></td><td>Decorator chain, outermost first. Example: <code>validation,notification</code>.</td></tr>
+</table>
+<div class="note"><b>Instructor quick path:</b> in <code>.env</code> set <code>MAIL_DELIVERY=console</code>, run <code>scripts/start-all.sh</code>, sign in with any <code>@sdu.edu.kz</code> address, press "Send verification code", then read the code with <code>grep "\[auth\]" build/logs/gateway.log | tail -1</code>. Alternatively sign in with the demo accounts <code>student@sdu.edu.kz</code> / <code>teacher@sdu.edu.kz</code> using <code>SDU_BAGDAR_SKIP_VERIFICATION=true</code>.</div>
+
+<h3>5.3 Sample data and initial preparation</h3>
+<ul>
+  <li><b>Automatic:</b> on first start each service creates its tables and fills them (campus layout, teacher offices and office hours, issue categories and sample reports, initiatives, clubs). Delete <code>data/*.db</code> and restart to reset everything.</li>
+  <li><b>Demo accounts</b> (when <code>CAMPUSOS_SEED_DEMO=true</code>): <code>student@sdu.edu.kz</code> and <code>teacher@sdu.edu.kz</code>.</li>
+  <li><b>New student:</b> no preparation; the account is created when the first verification code is requested for a valid <code>@sdu.edu.kz</code> address.</li>
+  <li><b>Teacher:</b> use "Register as teacher" (invite code <code>sdu-teacher</code> unless disabled).</li>
+</ul>
+
+<h3>5.4 Main features and how to use them</h3>
+<table>
+  <tr><th>Feature</th><th>How to use it</th></tr>
+  <tr><td>Sign in</td><td>Enter your SDU e-mail. On a new device press <b>Send verification code</b>, type the 6-digit code that appears, press <b>Sign in</b>. The device is remembered afterwards.</td></tr>
+  <tr><td>Free rooms</td><td>Rooms page: choose block, floor, kind, minimum capacity or search by room number. Each row shows how long the room stays free.</td></tr>
+  <tr><td>Teachers and office hours</td><td>Teachers page: open a teacher and book a slot, or choose a scheduling strategy (<i>first</i>, <i>deadline</i>, <i>preferred time</i>) and let the system choose. Teachers manage their own slots here.</td></tr>
+  <tr><td>Report a problem</td><td>Issues page: pick room and category, describe the problem (10 to 1000 characters). You see duplicates, notifications and the status of your reports. Teachers use <i>scope: all</i> to review and change status.</td></tr>
+  <tr><td>Initiatives</td><td>Search, filter by category, follow, create your own; pick a recommendation mode.</td></tr>
+  <tr><td>Clubs and surveys</td><td>Join clubs, see deadlines; owners edit the club page and build surveys (short answer, file, choice, checkbox) and read the answers.</td></tr>
+  <tr><td>Profile</td><td>Contacts, photo and four notification switches (lessons, deadlines, grades, attendance).</td></tr>
+</table>
+
+<h3>5.5 Troubleshooting</h3>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>Browser: "localhost refused to connect"</td><td>The frontend is not running. Run <code>scripts/start-all.sh</code>.</td></tr>
+  <tr><td>"Email delivery is not configured on this server."</td><td>SMTP is empty. Set <code>MAIL_DELIVERY=console</code> or fill the <code>SMTP_*</code> variables and restart.</td></tr>
+  <tr><td>"A code was just sent. Wait a minute..."</td><td>The resend limit is one per minute.</td></tr>
+  <tr><td>Page still shows an old sign-in screen</td><td>Browser cache: hard refresh (Cmd/Ctrl + Shift + R).</td></tr>
+  <tr><td>Port already in use</td><td>Run <code>scripts/stop-all.sh</code>, or change the <code>*_PORT</code> values in <code>.env</code>.</td></tr>
+</table>
+<div class="pagebreak"></div>
+
+<!-- ===================================================== 6 -->
+<h2>6. Assignment checklist and gaps that were closed</h2>
+<table>
+  <tr><th>Requirement</th><th>Status</th><th>Evidence</th></tr>
+  <tr><td>Strategy: interface, 3+ strategies, runtime switch, extensible</td><td class="ok">Done</td><td>Section 2.3; <code>SchedulingStrategy</code>; 6 unit tests</td></tr>
+  <tr><td>Adapter: incompatible component, adapter, original untouched, demonstrated</td><td class="ok">Done</td><td>Section 2.3; <code>LegacyTimetableAdapter</code>; 3 unit tests + e2e</td></tr>
+  <tr><td>Decorator: interface, 3+ decorators, wrapping, combinable, no change to original</td><td class="ok">Done</td><td>Section 2.3; <code>ReportPipelineFactory</code>; 7 unit tests + e2e</td></tr>
+  <tr><td>Presentation layer</td><td class="ok">Done</td><td>Web frontend in <code>frontend/</code>, HTTP controllers</td></tr>
+  <tr><td>Business logic layer</td><td class="ok">Done</td><td><code>application/</code> packages</td></tr>
+  <tr><td>Data access layer</td><td class="ok">Done</td><td>Repository interfaces and SQLite implementations</td></tr>
+  <tr><td>Domain model</td><td class="ok">Done</td><td><code>domain/</code> packages</td></tr>
+  <tr><td>Error handling and validation</td><td class="ok">Done</td><td>Section 4.4</td></tr>
+  <tr><td>Persistence (not in-memory only)</td><td class="ok">Done</td><td>SQLite files in <code>data/</code></td></tr>
+  <tr><td>Separation of concerns</td><td class="ok">Done</td><td>Section 2.1 and 2.4</td></tr>
+  <tr><td>A. Requirements specification</td><td class="ok">Done (completed)</td><td>Section 1. <b>Added:</b> consolidated FR / NFR lists, roles and a use-case diagram with use-case descriptions (previously only in scattered notes).</td></tr>
+  <tr><td>B. Software design</td><td class="ok">Done (completed)</td><td>Section 2. <b>Added:</b> UML for gateway and ProjectForge, layer diagram and a Decorator sequence diagram.</td></tr>
+  <tr><td>C. Database design</td><td class="ok">Done (completed)</td><td>Section 3. <b>Added:</b> ER diagrams for all four databases (including <code>trusted_devices</code> and <code>login_codes</code>, which were missing from the gateway UML) and the storage / retrieval description.</td></tr>
+  <tr><td>D. Testing documentation</td><td class="ok">Done (completed)</td><td>Section 4. <b>Added:</b> a Java unit-test suite for the three patterns (there were none), configuration-aware e2e test, live error examples and recorded results.</td></tr>
+  <tr><td>E. User documentation</td><td class="ok">Done (completed)</td><td>Section 5. <b>Added:</b> verification-code flow, <code>.env</code> reference, sample-data notes and troubleshooting.</td></tr>
+  <tr><td>At least five meaningful tests besides pattern tests</td><td class="ok">Done</td><td>11 e2e tests plus 14 service unit tests</td></tr>
+  <tr><td>README and diagrams</td><td class="ok">Done</td><td><code>README.md</code>, <code>docs/architecture.md</code>, <code>uml-diagram.md</code>, per-service <code>docs/db-uml.md</code>, this report</td></tr>
+  <tr><td>Runs in the instructor's environment from the instructions</td><td class="ok">Done, with a caveat</td><td>One command starts everything. Real e-mail needs SMTP credentials; for a demo set <code>MAIL_DELIVERY=console</code> (section 5.2).</td></tr>
+</table>
+<h3>Known limitations</h3>
+<ul>
+  <li>The university timetable, grades and the notification feed are simulated data (the Adapter and the ports isolate this).</li>
+  <li>The AI validation service is a local rule-based placeholder; an external provider can be set with <code>AI_PROVIDER_URL</code>.</li>
+  <li>Verification e-mail needs SMTP credentials; without them use the <code>console</code> delivery mode.</li>
+  <li>The Java auth code (<code>AuthService</code>) has no dedicated unit tests; it is covered by the end-to-end tests and manual checks.</li>
+</ul>
+
+</body>
+</html>
