@@ -4,7 +4,7 @@ Smart campus platform for SDU University: **CampusPlus** (free rooms, office hou
 
 - Architecture, patterns and decisions: [docs/architecture.md](docs/architecture.md)
 - Every service folder in `services/` has an `explanation.md` and a `docs/db-uml.md` (UML of its database)
-- Full project report (requirements, UML, database design, tests, user guide): [docs/SDU_Bagdar_Report.pdf](docs/SDU_Bagdar_Report.pdf) (source: `docs/report/report.html`)
+- Full project report (requirements, UML, database design, tests, user guide): [SDU_Bagdar_Report.pdf](SDU_Bagdar_Report.pdf) (source: `docs/report/report.html`)
 - Development plan: [plan.md](plan.md)
 
 ## Quick start
