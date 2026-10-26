@@ -1,0 +1,178 @@
+<!doctype html><meta charset=utf-8><title>Design Patterns in SDU Bağdar</title><style>@page{size:A4;margin:16mm}body{font:10.5pt/1.45 -apple-system,Helvetica,Arial,sans-serif;color:#1d1f3a}
+h1{font-size:24pt;margin:0;color:#1f2255}.sub{color:#666;margin:2pt 0 14pt}h2{font-size:15pt;color:#922d2d;border-bottom:2px solid #922d2d;padding-bottom:3pt;margin-top:22pt;page-break-before:always}
+h2:first-of-type{page-break-before:avoid}h3{font-size:10.5pt;margin:12pt 0 3pt}.why{background:#f3f0f0;border-left:4px solid #922d2d;padding:8pt 10pt;margin:8pt 0}
+pre{background:#f6f7fb;border:1px solid #dde;border-radius:4px;padding:6pt 8pt;font:8pt/1.35 Menlo,monospace;white-space:pre-wrap;margin:0 0 6pt;page-break-inside:avoid}
+.file{font:7.5pt Menlo,monospace;color:#555;background:#e8eaf3;padding:2pt 6pt;border-radius:4px 4px 0 0;display:inline-block}code{font:8.5pt Menlo,monospace;background:#eef;padding:0 2pt}
+.note{color:#555;font-size:9.5pt}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd;padding:4pt 6pt;text-align:left;vertical-align:top}th{background:#eceef7}</style>
+<h1>Design Patterns in SDU Bağdar</h1>
+<p class="sub">Strategy · Adapter · Decorator — why each one, and where it lives in the Java code</p>
+
+<h2>1. Strategy — office-hour auto-booking (CampusPlus)</h2>
+<div class="why"><b>Why this pattern.</b> A student asks the system to pick an office-hour slot, but "best slot" has several valid meanings: the first one in the week, the soonest one before a deadline, the one closest to a preferred time. Without a pattern this becomes an <code>if/else</code> chain inside <code>OfficeHourService</code> that must be edited for every new rule. Strategy puts each policy behind one interface and lets the caller choose it at runtime by name (<code>"strategy": "deadline"</code> in the request body). Adding a policy means one new class and one <code>register()</code> call; existing code is untouched (Open/Closed).</div>
+<h3>Interface (the contract)</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/domain/SchedulingStrategy.java:6-11</div><pre>/** Strategy: one policy for picking an office-hour slot among those with free seats. */
+public interface SchedulingStrategy {
+    String name();
+
+    Optional&lt;OfficeHour&gt; choose(List&lt;OfficeHour&gt; openSlots, SchedulingRequest request);
+}</pre>
+<h3>Concrete strategies</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/domain/FirstAvailableStrategy.java:8-15</div><pre>public final class FirstAvailableStrategy implements SchedulingStrategy {
+    @Override public String name() { return &quot;first&quot;; }
+
+    @Override
+    public Optional&lt;OfficeHour&gt; choose(List&lt;OfficeHour&gt; openSlots, SchedulingRequest request) {
+        return openSlots.stream().min(Comparator.comparing(OfficeHour::day).thenComparing(OfficeHour::start));
+    }
+}</pre><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/domain/EarliestDeadlineStrategy.java:8-17</div><pre>public final class EarliestDeadlineStrategy implements SchedulingStrategy {
+    @Override public String name() { return &quot;deadline&quot;; }
+
+    @Override
+    public Optional&lt;OfficeHour&gt; choose(List&lt;OfficeHour&gt; openSlots, SchedulingRequest request) {
+        return openSlots.stream()
+                .filter(slot -&gt; request.deadline() == null || !slot.nextOccurrence(request.today()).isAfter(request.deadline()))
+                .min(Comparator.comparing((OfficeHour slot) -&gt; slot.nextOccurrence(request.today())).thenComparing(OfficeHour::start));
+    }
+}</pre>
+<p>Third implementation: <code>services/campus-plus-java/src/main/java/campusos/campusplus/domain/PreferredTimeStrategy.java</code></p>
+<h3>Runtime selection</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/application/StrategyRegistry.java:10-25</div><pre>public final class StrategyRegistry {
+    private final Map&lt;String, SchedulingStrategy&gt; strategies = new LinkedHashMap&lt;&gt;();
+
+    public StrategyRegistry register(SchedulingStrategy strategy) {
+        strategies.put(strategy.name(), strategy);
+        return this;
+    }
+
+    public SchedulingStrategy get(String name) {
+        SchedulingStrategy strategy = strategies.get(name);
+        if (strategy == null) throw ApiException.invalid(&quot;Unknown scheduling strategy &#x27;&quot; + name + &quot;&#x27;. Use one of &quot; + names() + &quot;.&quot;);
+        return strategy;
+    }
+
+    public Set&lt;String&gt; names() { return strategies.keySet(); }
+}</pre>
+<h3>Context that uses it</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/application/OfficeHourService.java:42-52</div><pre>    /** Picks a slot of {@code teacherId} with the chosen strategy, then books it. */
+    public OfficeHour autoBook(AuthUser student, String teacherId, String strategyName, SchedulingRequest request) {
+        SchedulingStrategy strategy = strategies.get(strategyName);
+        List&lt;OfficeHour&gt; open = slots.listByTeacher(teacherId, student.id()).stream()
+                .filter(OfficeHour::hasFreeSeat)
+                .filter(slot -&gt; !slot.bookedByMe())
+                .toList();
+        OfficeHour chosen = strategy.choose(open, request)
+                .orElseThrow(() -&gt; ApiException.conflict(&quot;No office hour matches the &#x27;&quot; + strategyName + &quot;&#x27; policy.&quot;));
+        return book(student, chosen.id());
+    }</pre>
+<h3>Wiring</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/presentation/CampusPlusMain.java:42-45</div><pre>        StrategyRegistry strategies = new StrategyRegistry()
+                .register(new FirstAvailableStrategy())
+                .register(new EarliestDeadlineStrategy())
+                .register(new PreferredTimeStrategy());</pre>
+<p class="note">Extra instance: ProjectForge (Python) uses the same pattern for recommendations (<code>RecommendationStrategy</code>).</p>
+
+<h2>2. Adapter — legacy university timetable (CampusPlus)</h2>
+<div class="why"><b>Why this pattern.</b> Room availability must come from the university's existing timetable system, which we cannot and should not change. Its interface is incompatible with ours: pipe-separated text rows, numeric weekdays and <code>HHMM</code> integers, whereas the application wants <code>FreeInterval</code> objects per room and day. Adapter translates between the two so the application depends only on the <code>TimetableProvider</code> port. If the timetable source changes (or is replaced by a real API), only the adapter is rewritten.</div>
+<h3>Target interface (what the application expects)</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/domain/TimetableProvider.java:6-9</div><pre>/** Port the application depends on; how the university timetable is fetched is an infrastructure detail. */
+public interface TimetableProvider {
+    List&lt;FreeInterval&gt; freeIntervals(String roomId, DayOfWeek day);
+}</pre>
+<h3>Adaptee — legacy system, deliberately left untouched</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/infrastructure/legacy/LegacyTimetableSystem.java:12-24</div><pre>public final class LegacyTimetableSystem {
+    private static final int[][] SLOTS = {{900, 950}, {1000, 1050}, {1100, 1150}, {1200, 1250},
+            {1300, 1350}, {1400, 1450}, {1500, 1550}, {1600, 1650}};
+    private final List&lt;String&gt; roomCodes;
+
+    public LegacyTimetableSystem(List&lt;String&gt; roomCodes) { this.roomCodes = roomCodes; }
+
+    /** Row format: ROOM|WEEKDAY|HHMM_FROM|HHMM_TO|COURSE */
+    public List&lt;String&gt; exportScheduleRows() {
+        List&lt;String&gt; rows = new ArrayList&lt;&gt;();
+        roomCodes.forEach(room -&gt; addRoomRows(rows, room));
+        return rows;
+    }</pre>
+<h3>Adapter — converts rows into free intervals</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/infrastructure/legacy/LegacyTimetableAdapter.java:14-40</div><pre>/** Adapter: presents the legacy text export as lesson-free room intervals, leaving the legacy class untouched. */
+public final class LegacyTimetableAdapter implements TimetableProvider {
+    private record Lesson(LocalTime start, LocalTime end) {}
+
+    private final Map&lt;String, List&lt;Lesson&gt;&gt; lessonsByRoomAndDay;
+
+    public LegacyTimetableAdapter(LegacyTimetableSystem legacy) {
+        this.lessonsByRoomAndDay = legacy.exportScheduleRows().stream()
+                .map(row -&gt; row.split(&quot;\\|&quot;))
+                .collect(Collectors.groupingBy(
+                        cols -&gt; key(cols[0], DayOfWeek.of(Integer.parseInt(cols[1]))),
+                        Collectors.mapping(cols -&gt; new Lesson(parseHhmm(cols[2]), parseHhmm(cols[3])), Collectors.toList())));
+    }
+
+    @Override
+    public List&lt;FreeInterval&gt; freeIntervals(String roomId, DayOfWeek day) {
+        List&lt;Lesson&gt; lessons = lessonsByRoomAndDay.getOrDefault(key(roomId, day), List.of()).stream()
+                .sorted(Comparator.comparing(Lesson::start)).toList();
+        List&lt;FreeInterval&gt; free = new ArrayList&lt;&gt;();
+        LocalTime cursor = RoomService.DAY_OPENS;
+        for (Lesson lesson : lessons) {
+            if (lesson.start().isAfter(cursor)) free.add(new FreeInterval(cursor, lesson.start()));
+            if (lesson.end().isAfter(cursor)) cursor = lesson.end();
+        }
+        if (cursor.isBefore(RoomService.DAY_CLOSES)) free.add(new FreeInterval(cursor, RoomService.DAY_CLOSES));
+        return free;
+    }</pre>
+<h3>Wiring</h3><div class="file">services/campus-plus-java/src/main/java/campusos/campusplus/presentation/CampusPlusMain.java:40-40</div><pre>        var timetable = new LegacyTimetableAdapter(new LegacyTimetableSystem(roomCodes));</pre>
+<p class="note">Consumer: <code>services/campus-plus-java/src/main/java/campusos/campusplus/application/RoomService.java</code> receives a <code>TimetableProvider</code> and never sees the legacy format.</p>
+
+<h2>3. Decorator — report processing pipeline (FixMyCampus)</h2>
+<div class="why"><b>Why this pattern.</b> Submitting a problem report needs several independent extras around the core "save the report" step: content validation with an audit trail, duplicate detection with an alert to the original reporter, and a confirmation notification. Putting all of it into one service creates a large class where steps cannot be reordered, switched off or tested alone. With Decorator each concern is a small wrapper implementing the same <code>ReportProcessor</code> interface; they are stacked in any combination, and the order is configurable via <code>FIXMYCAMPUS_PIPELINE</code> without code changes.</div>
+<h3>Component interface</h3><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/domain/ReportProcessor.java:4-6</div><pre>public interface ReportProcessor {
+    Report process(Report report);
+}</pre>
+<h3>Concrete component — the undecorated core</h3><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/application/processing/BaseReportProcessor.java:8-15</div><pre>public final class BaseReportProcessor implements ReportProcessor {
+    private final ReportRepository reports;
+
+    public BaseReportProcessor(ReportRepository reports) { this.reports = reports; }
+
+    @Override
+    public Report process(Report report) { return reports.insert(report); }
+}</pre>
+<h3>Decorators</h3><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/application/processing/ValidationAuditDecorator.java:24-34</div><pre>    @Override
+    public Report process(Report report) {
+        String problem = findProblem(report);
+        if (problem != null) {
+            audit.record(null, report.reporterId(), &quot;REJECTED&quot;, problem);
+            throw ApiException.invalid(problem);
+        }
+        Report saved = next.process(report);
+        audit.record(saved.id(), saved.reporterId(), &quot;SUBMITTED&quot;, saved.category() + &quot; in &quot; + saved.roomId());
+        return saved;
+    }</pre><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/application/processing/DuplicateAlertDecorator.java:20-28</div><pre>    @Override
+    public Report process(Report report) {
+        var duplicate = reports.findOpenDuplicate(report.roomId(), report.category());
+        Report saved = next.process(duplicate.map(original -&gt; report.withDuplicateOf(original.id())).orElse(report));
+        duplicate.filter(original -&gt; !original.reporterId().equals(report.reporterId()))
+                .ifPresent(original -&gt; notifications.add(original.reporterId(),
+                        &quot;Someone else reported the same &quot; + original.category() + &quot; problem in &quot; + original.roomId() + &quot;.&quot;));
+        return saved;
+    }</pre><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/application/processing/NotificationDecorator.java:17-22</div><pre>    @Override
+    public Report process(Report report) {
+        Report saved = next.process(report);
+        notifications.add(saved.reporterId(), &quot;Report &quot; + saved.id() + &quot; received: &quot; + saved.category() + &quot; in &quot; + saved.roomId() + &quot;.&quot;);
+        return saved;
+    }</pre>
+<h3>Composition: stacking decorators</h3><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/application/processing/ReportPipelineFactory.java:24-37</div><pre>    public ReportProcessor build(List&lt;String&gt; names) {
+        ReportProcessor processor = new BaseReportProcessor(reports);
+        for (String name : names.reversed()) processor = wrap(name.trim(), processor);
+        return processor;
+    }
+
+    private ReportProcessor wrap(String name, ReportProcessor inner) {
+        return switch (name) {
+            case &quot;validation&quot; -&gt; new ValidationAuditDecorator(inner, categories, audit);
+            case &quot;duplicate&quot; -&gt; new DuplicateAlertDecorator(inner, reports, notifications);
+            case &quot;notification&quot; -&gt; new NotificationDecorator(inner, notifications);
+            default -&gt; throw new IllegalArgumentException(&quot;Unknown report decorator &#x27;&quot; + name + &quot;&#x27;&quot;);
+        };
+    }</pre>
+<h3>Wiring</h3><div class="file">services/fix-my-campus-java/src/main/java/campusos/fixmycampus/presentation/FixMyCampusMain.java:31-32</div><pre>        var pipeline = new ReportPipelineFactory(reports, support, support, support)
+                .build(Arrays.asList(Env.get(&quot;FIXMYCAMPUS_PIPELINE&quot;, &quot;validation,duplicate,notification&quot;).split(&quot;,&quot;)));</pre>
+<p class="note">With the default <code>validation,duplicate,notification</code> a report is validated first, then checked for duplicates, then saved by the base processor; notifications are sent on the way back out.</p>
+
+<h2>Summary</h2>
+<table><tr><th>Pattern</th><th>Problem solved</th><th>Key files</th></tr>
+<tr><td>Strategy</td><td>Interchangeable slot-picking algorithms</td><td><code>SchedulingStrategy</code>, <code>StrategyRegistry</code>, <code>*Strategy</code></td></tr>
+<tr><td>Adapter</td><td>Incompatible legacy timetable format</td><td><code>TimetableProvider</code>, <code>LegacyTimetableAdapter</code></td></tr>
+<tr><td>Decorator</td><td>Stackable report-handling steps</td><td><code>ReportProcessor</code>, <code>*Decorator</code>, <code>ReportPipelineFactory</code></td></tr></table>
+<p class="note">Tests: <code>tests/run-java-tests.sh</code> covers all three patterns.</p>
